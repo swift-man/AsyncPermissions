@@ -55,6 +55,7 @@ Task 취소는 `PermissionError.cancelled`로 구분하므로 호출부는 `try 
 - MainActor에서 사용합니다. 상태는 OS에서 매번 조회하며 자체 저장·캐시하지 않습니다.
 - 미결정 상태에서만 시스템 권한을 요청합니다. 같은 권한의 진행 중 요청은 공유합니다.
 - 이미 거부·제한된 권한에는 시스템 팝업을 다시 요청하지 않습니다.
+- 시스템 요청 후에도 상태가 `notDetermined`이면 그대로 반환하며 자동 재요청하지 않습니다. 호출자는 반환값을 확인하고 반복 요청 루프를 만들지 않아야 합니다.
 - 안내 UI, 설정 앱 이동, 복귀 후 재조회 및 화면 생명주기는 호출자가 관리합니다.
 - OS 권한 팝업 자체는 취소할 수 없습니다. 취소된 호출자는 OS 응답 완료 후 cancelled 오류를 받으며, 다른 호출자의 공유 요청은 취소하지 않습니다.
 - 카메라 요청에는 `NSCameraUsageDescription`, 사진 읽기·쓰기에는 `NSPhotoLibraryUsageDescription`, 사진 추가 전용에는 `NSPhotoLibraryAddUsageDescription`을 앱 Info.plist에 설정해야 합니다.

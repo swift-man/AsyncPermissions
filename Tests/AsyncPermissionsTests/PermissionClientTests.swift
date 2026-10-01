@@ -58,6 +58,8 @@ struct PermissionClientTests {
     #expect(SystemPermissionDriver.mapCameraStatus(.restricted) == .restricted)
     #expect(SystemPermissionDriver.mapCameraStatus(.notDetermined) == .notDetermined)
     #expect(PermissionStatus.limited.isGranted)
+    #expect(PermissionStatus.authorized.isGranted)
+    #expect(PermissionStatus.notDetermined.isGranted == false)
     #expect(PermissionStatus.denied.isGranted == false)
     #expect(PermissionStatus.restricted.isGranted == false)
     #expect(PermissionStatus.unknown.isGranted == false)
@@ -72,8 +74,7 @@ struct PermissionClientTests {
     let cancelledRequest = Task { try await client.request(.camera) }
     await driver.waitUntilRequested()
     let remainingRequest = Task { try await client.request(.camera) }
-    // MainActor의 두 번째 호출이 pending 요청을 조회하도록 실행 기회를 제공한다.
-    await Task.yield()
+    await driver.waitUntilStatusQueried(count: 2)
     cancelledRequest.cancel()
     driver.complete(with: .authorized)
     do {
@@ -103,6 +104,26 @@ struct PermissionClientTests {
     }
     #expect(driver.requestedPermissions.isEmpty)
   }
+
+  /// 공개 프로토콜 타입도 Sendable 계약으로 전달할 수 있습니다.
+  @Test
+  func publicContractIsSendable() {
+    let client: any PermissionRequesting = PermissionClient()
+    requireSendable(client)
+  }
+
+  /// 시스템이 미결정 상태를 반환해도 자동으로 재요청하지 않습니다.
+  @Test
+  func preservesUndeterminedResponse() async throws {
+    let driver = PermissionDriverDouble()
+    driver.response = .notDetermined
+    let client = PermissionCoordinator(driver: driver)
+    #expect(try await client.request(.camera) == .notDetermined)
+    #expect(driver.requestedPermissions == [.camera])
+  }
+
+  /// 컴파일 시 공개 계약의 Sendable 준수를 검증합니다.
+  private func requireSendable<Value: Sendable>(_ value: Value) {}
 }
 
 @MainActor
@@ -113,9 +134,26 @@ private final class PermissionDriverDouble: PermissionDriving {
   var shouldSuspend = false
   private var pendingResponse: CheckedContinuation<PermissionStatus, Never>?
   private var requestObserver: CheckedContinuation<Void, Never>?
+  private var statusQueryCount = 0
+  private var expectedStatusQueryCount = 0
+  private var statusQueryObserver: CheckedContinuation<Void, Never>?
 
   /// 테스트에서 설정 변경을 재현합니다.
-  func status(for permission: PermissionKind) -> PermissionStatus { currentStatus }
+  func status(for permission: PermissionKind) -> PermissionStatus {
+    statusQueryCount += 1
+    if statusQueryCount >= expectedStatusQueryCount {
+      statusQueryObserver?.resume()
+      statusQueryObserver = nil
+    }
+    return currentStatus
+  }
+
+  /// 두 번째 호출의 동기 상태 조회와 공유 요청 선택이 끝난 뒤 테스트를 재개합니다.
+  func waitUntilStatusQueried(count: Int) async {
+    if statusQueryCount >= count { return }
+    expectedStatusQueryCount = count
+    await withCheckedContinuation { statusQueryObserver = $0 }
+  }
 
   /// 주입된 응답 또는 명시적으로 완료하는 요청을 사용합니다.
   func request(_ permission: PermissionKind) async -> PermissionStatus {
