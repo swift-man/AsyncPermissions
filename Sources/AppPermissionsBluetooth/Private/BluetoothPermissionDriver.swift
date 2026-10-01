@@ -10,45 +10,104 @@ import CoreBluetooth
 import AppPermissions
 
 @MainActor
-final class BluetoothPermissionDriver: NSObject, CBCentralManagerDelegate {
-  private var centralManager: CBCentralManager?
-  private var waiters: [CheckedContinuation<PermissionStatus, Never>] = []
+protocol BluetoothAuthorizationManaging: AnyObject {
+  var authorization: CBManagerAuthorization { get }
+  var onChange: (@MainActor (CBManagerAuthorization, Bool) -> Void)? { get set }
+  /// 권한 확인용 관리자를 시작합니다.
+  func start()
+  /// 사용이 끝난 관리자를 해제합니다.
+  func stop()
+}
 
-  /// 스캔 없이 관리자 생성으로 Bluetooth 공유 권한만 요청합니다.
-  func request() async -> PermissionStatus {
-    let currentStatus = Self.mapStatus(CBManager.authorization)
-    guard currentStatus == .notDetermined else { return currentStatus }
-    return await withCheckedContinuation { continuation in
-      waiters.append(continuation)
-      if centralManager == nil {
-        centralManager = CBCentralManager(
-          delegate: self,
-          queue: .main,
-          options: [CBCentralManagerOptionShowPowerAlertKey: false]
-        )
-      }
-    }
+@MainActor
+final class SystemBluetoothAuthorizationManager: NSObject, CBCentralManagerDelegate, BluetoothAuthorizationManaging {
+  private var manager: CBCentralManager?
+  var authorization: CBManagerAuthorization { CBManager.authorization }
+  var onChange: (@MainActor (CBManagerAuthorization, Bool) -> Void)?
+
+  /// 스캔이나 전원 경고 없이 OS 권한 확인을 시작합니다.
+  func start() {
+    manager = CBCentralManager(
+      delegate: self,
+      queue: .main,
+      options: [CBCentralManagerOptionShowPowerAlertKey: false]
+    )
   }
 
-  /// 전원 상태와 권한 상태를 분리하여 OS 콜백을 전달합니다.
+  /// 다음 요청과 이전 관리자의 수명을 분리합니다.
+  func stop() { manager = nil }
+
+  /// 해제된 이전 관리자의 늦은 콜백은 새 요청에 전달하지 않습니다.
   nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
+    let identity = ObjectIdentifier(central)
     let authorization = CBManager.authorization
     let isUnsupported = central.state == .unsupported
     Task { @MainActor [weak self] in
-      self?.complete(isUnsupported ? .unknown : Self.mapStatus(authorization))
+      guard let self, let manager, ObjectIdentifier(manager) == identity else { return }
+      onChange?(authorization, isUnsupported)
+    }
+  }
+}
+
+@MainActor
+final class BluetoothPermissionDriver {
+  private let manager: any BluetoothAuthorizationManaging
+  private let waitForDeadline: @MainActor @Sendable () async throws -> Void
+  private var waiters: [CheckedContinuation<Result<PermissionStatus, PermissionError>, Never>] = []
+  private var deadlineTask: Task<Void, Never>?
+
+  /// 관리자와 시간 제한을 주입하며 생성만으로 OS 요청을 수행하지 않습니다.
+  init(
+    manager: any BluetoothAuthorizationManaging = SystemBluetoothAuthorizationManager(),
+    waitForDeadline: @escaping @MainActor @Sendable () async throws -> Void = { try await Task.sleep(nanoseconds: 60_000_000_000) }
+  ) {
+    self.manager = manager
+    self.waitForDeadline = waitForDeadline
+    manager.onChange = { [weak self] authorization, isUnsupported in
+      guard let self else { return }
+      if isUnsupported { finish(.failure(.unsupported)) }
+      else if authorization != .notDetermined { finish(.success(Self.mapStatus(authorization))) }
     }
   }
 
-  /// 결정된 권한을 대기자에게 전달하며 검색이나 연결은 수행하지 않습니다.
-  private func complete(_ status: PermissionStatus) {
-    guard status != .notDetermined else { return }
-    let continuations = waiters
-    waiters.removeAll()
-    centralManager = nil
-    for continuation in continuations { continuation.resume(returning: status) }
+  /// 공유 Bluetooth 권한만 요청하고 콜백 누락 시 대기를 종료합니다.
+  func request() async throws(PermissionError) -> PermissionStatus {
+    let currentStatus = Self.mapStatus(manager.authorization)
+    guard currentStatus == .notDetermined else { return currentStatus }
+    let result: Result<PermissionStatus, PermissionError> = await withCheckedContinuation { continuation in
+      waiters.append(continuation)
+      if waiters.count == 1 {
+        startDeadline()
+        manager.start()
+      }
+    }
+    return try result.get()
   }
 
-  /// Bluetooth 전원 꺼짐을 권한 거부로 취급하지 않습니다.
+  /// 콜백이 누락돼도 현재 권한을 재조회하고 미결정이면 시간 초과로 해제합니다.
+  private func startDeadline() {
+    let waitForDeadline = waitForDeadline
+    deadlineTask = Task { @MainActor [weak self] in
+      do { try await waitForDeadline() } catch { return }
+      guard !Task.isCancelled else { return }
+      guard let self else { return }
+      let currentStatus = Self.mapStatus(manager.authorization)
+      finish(currentStatus == .notDetermined ? .failure(.timedOut) : .success(currentStatus))
+    }
+  }
+
+  /// 대기자와 관리자 및 시간 제한 작업을 함께 정리합니다.
+  private func finish(_ result: Result<PermissionStatus, PermissionError>) {
+    guard !waiters.isEmpty else { return }
+    deadlineTask?.cancel()
+    deadlineTask = nil
+    manager.stop()
+    let continuations = waiters
+    waiters.removeAll()
+    for continuation in continuations { continuation.resume(returning: result) }
+  }
+
+  /// 전원 상태와 접근 권한을 분리합니다.
   nonisolated static func mapStatus(_ status: CBManagerAuthorization) -> PermissionStatus {
     switch status {
     case .notDetermined: return .notDetermined

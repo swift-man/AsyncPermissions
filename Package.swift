@@ -32,7 +32,7 @@ let package = Package(
     .testTarget(name: "AppPermissionsTests", dependencies: ["AppPermissions"]),
     .testTarget(
       name: "AppPermissionsSystemTests",
-      dependencies: permissionModules.map { .target(name: $0) }
+      dependencies: [.target(name: "AppPermissions")] + permissionModules.map { .target(name: $0) }
     )
   ] + permissionModules.map { .target(name: $0, dependencies: ["AppPermissions"]) }
 )

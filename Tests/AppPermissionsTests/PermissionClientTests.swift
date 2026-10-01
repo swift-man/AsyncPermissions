@@ -70,8 +70,13 @@ struct PermissionClientTests {
     let client = PermissionCoordinator(driver: driver)
     let cancelledRequest = Task { try await client.request(.camera) }
     await driver.waitUntilRequested()
-    let remainingRequest = Task { try await client.request(.camera) }
-    await driver.waitUntilStatusQueried(count: 2)
+    let started = AsyncStream<Void>.makeStream()
+    let remainingRequest = Task { @MainActor in
+      started.continuation.yield(())
+      return try await client.request(.camera)
+    }
+    var iterator = started.stream.makeAsyncIterator()
+    _ = await iterator.next()
     cancelledRequest.cancel()
     driver.complete(with: .authorized)
     do {
@@ -82,6 +87,8 @@ struct PermissionClientTests {
     }
     #expect(try await remainingRequest.value == .authorized)
     #expect(driver.requestedPermissions == [.camera])
+    #expect(driver.statusQueryCount == 1)
+    started.continuation.finish()
   }
 
   /// 요청 시작 전의 취소는 OS 권한 요청을 발생시키지 않습니다.
@@ -173,6 +180,59 @@ struct PermissionClientTests {
     #expect(PermissionError.systemError(CancellationError()) == .cancelled)
     #expect(PermissionError.systemError(PermissionError.unsupported) == .unsupported)
   }
+
+  /// 비동기 상태 조회가 끝나기 전의 동시 요청도 조회부터 공유합니다.
+  @Test
+  func sharesSuspendedStatusQuery() async throws {
+    let driver = DelayedStatusProvider()
+    let client = PermissionClient(providers: [driver])
+    let first = Task { try await client.request(.camera) }
+    await driver.waitUntilQueryStarted()
+    let started = AsyncStream<Void>.makeStream()
+    let second = Task { @MainActor in
+      started.continuation.yield(())
+      return try await client.request(.camera)
+    }
+    var iterator = started.stream.makeAsyncIterator()
+    _ = await iterator.next()
+    driver.releaseQuery()
+    #expect(try await first.value == .authorized)
+    #expect(try await second.value == .authorized)
+    #expect(driver.queryCount == 1)
+    #expect(driver.requestCount == 1)
+    started.continuation.finish()
+  }
+
+  /// 결정된 권한도 미지원 입력이면 상태 조회 전에 거절합니다.
+  @Test
+  func validatesSupportBeforeDeterminedStatus() async {
+    let driver = PermissionDriverDouble()
+    driver.supportedPermission = .camera
+    driver.currentStatus = .authorized
+    let client = PermissionClient(providers: [driver])
+    do {
+      _ = try await client.request(.calendarWriteOnly)
+      Issue.record("지원하지 않는 범위는 기존 허용과 무관하게 거절해야 합니다.")
+    } catch { #expect(error == .unsupported) }
+    #expect(driver.statusQueryCount == 0)
+    #expect(driver.requestedPermissions.isEmpty)
+  }
+
+  /// 시간 초과 오류 후 공유 항목을 정리하여 후속 요청이 다시 실행됩니다.
+  @Test
+  func clearsTimedOutRequest() async throws {
+    let driver = PermissionDriverDouble()
+    driver.requestError = .timedOut
+    let client = PermissionClient(providers: [driver])
+    do {
+      _ = try await client.request(.camera)
+      Issue.record("시간 초과 오류를 반환해야 합니다.")
+    } catch { #expect(error == .timedOut) }
+    driver.requestError = nil
+    driver.response = .authorized
+    #expect(try await client.request(.camera) == .authorized)
+    #expect(driver.requestedPermissions == [.camera, .camera])
+  }
 }
 
 @MainActor
@@ -185,9 +245,7 @@ private final class PermissionDriverDouble: PermissionProviding {
   var requestError: PermissionError?
   private var pendingResponse: CheckedContinuation<PermissionStatus, Never>?
   private var requestObserver: CheckedContinuation<Void, Never>?
-  private var statusQueryCount = 0
-  private var expectedStatusQueryCount = 0
-  private var statusQueryObserver: CheckedContinuation<Void, Never>?
+  private(set) var statusQueryCount = 0
 
   /// 공통 요청 조정 테스트에서는 모든 권한을 지원합니다.
   func supports(_ permission: PermissionKind) -> Bool {
@@ -197,18 +255,7 @@ private final class PermissionDriverDouble: PermissionProviding {
   /// 테스트에서 설정 변경을 재현합니다.
   func status(for permission: PermissionKind) -> PermissionStatus {
     statusQueryCount += 1
-    if statusQueryCount >= expectedStatusQueryCount {
-      statusQueryObserver?.resume()
-      statusQueryObserver = nil
-    }
     return currentStatus
-  }
-
-  /// 두 번째 호출의 동기 상태 조회와 공유 요청 선택이 끝난 뒤 테스트를 재개합니다.
-  func waitUntilStatusQueried(count: Int) async {
-    if statusQueryCount >= count { return }
-    expectedStatusQueryCount = count
-    await withCheckedContinuation { statusQueryObserver = $0 }
   }
 
   /// 주입된 응답 또는 명시적으로 완료하는 요청을 사용합니다.
@@ -237,5 +284,46 @@ private final class PermissionDriverDouble: PermissionProviding {
     currentStatus = status
     pendingResponse?.resume(returning: status)
     pendingResponse = nil
+  }
+}
+
+@MainActor
+private final class DelayedStatusProvider: PermissionProviding {
+  var queryCount = 0
+  var requestCount = 0
+  private let entered = AsyncStream<Void>.makeStream()
+  private let released = AsyncStream<Void>.makeStream()
+
+  /// 조회 순서 테스트는 카메라만 지원합니다.
+  func supports(_ permission: PermissionKind) -> Bool { permission == .camera }
+
+  /// 첫 상태 조회의 미결정 스냅샷 반환을 테스트가 해제할 때까지 보류합니다.
+  func status(for permission: PermissionKind) async -> PermissionStatus {
+    queryCount += 1
+    if queryCount == 1 {
+      entered.continuation.yield(())
+      var iterator = released.stream.makeAsyncIterator()
+      _ = await iterator.next()
+    }
+    return .notDetermined
+  }
+
+  /// 시스템 요청 실행 횟수를 기록합니다.
+  func request(_ permission: PermissionKind) async throws(PermissionError) -> PermissionStatus {
+    requestCount += 1
+    return .authorized
+  }
+
+  /// 첫 상태 조회 진입을 관측합니다.
+  func waitUntilQueryStarted() async {
+    var iterator = entered.stream.makeAsyncIterator()
+    _ = await iterator.next()
+  }
+
+  /// 보류 중인 상태 조회를 재개합니다.
+  func releaseQuery() {
+    released.continuation.yield(())
+    released.continuation.finish()
+    entered.continuation.finish()
   }
 }

@@ -34,12 +34,11 @@ import AppPermissions
 import AppPermissionsCamera
 
 @MainActor
-func cameraAccess() async throws(PermissionError) -> PermissionStatus {
-  let permissionClient = PermissionClient(providers: [CameraPermissionProvider()])
-  let currentStatus = await permissionClient.status(for: .camera)
-  guard currentStatus == .notDetermined else { return currentStatus }
-  return try await permissionClient.request(.camera)
+func cameraAccess(using permissionClient: any PermissionRequesting) async throws(PermissionError) -> PermissionStatus {
+  try await permissionClient.request(.camera)
 }
+
+// 조립 지점: let permissionClient = PermissionClient(providers: [CameraPermissionProvider()])
 ```
 
 조립 지점에서 클라이언트를 한 번 만들고 PermissionRequesting으로 주입합니다.
@@ -61,15 +60,18 @@ isGranted는 일부 접근이라도 허용되었는지를 뜻하며 요청한 �
 예를 들어 Always 위치는 authorized, 전체 캘린더 접근은 authorized인지 직접 확인합니다.
 limited 사진·연락처는 전체 데이터 접근이 아닙니다.
 
-PermissionError는 cancelled, unsupported, systemFailure(domain:code:)를 구분합니다.
+PermissionError는 cancelled, unsupported, timedOut, missingUsageDescription(key:), systemFailure(domain:code:)를 구분합니다.
 거부는 오류가 아니라 상태입니다. 시스템 오류를 빈 결과나 denied로 숨기지 않습니다.
-취소된 호출자는 OS 응답 후 cancelled를 받습니다. 실제 OS 팝업과 공유 작업은 취소하지 않습니다.
+취소된 호출자는 공유 요청이 OS 응답 또는 드라이버 시간 초과로 끝난 뒤 cancelled를 받습니다. 실제 OS 팝업과 공유 작업은 취소하지 않습니다.
 
 ## 범위별 동작
 
 - 미결정 권한과 명시적인 범위 승격(WhenInUse → Always, 캘린더 writeOnly → fullAccess, 알림 provisional → 일반 요청)만 요청합니다.
 - 상태는 OS에서 매번 조회하며 자체 저장·캐시하지 않습니다. OS가 notDetermined를 유지하면 그대로 반환하며 자동 재요청하지 않습니다.
 - Bluetooth Central/Peripheral은 현대 OS의 공유 Bluetooth 권한 하나로 표현합니다. 스캔·연결·광고는 수행하지 않으며 전원 꺼짐을 거부로 오판하지 않습니다.
+- 위치·Bluetooth 초기 요청은 60초 안에 콜백이 없으면 현재 권한을 다시 확인합니다. 여전히 미결정이면 timedOut으로 대기를 정리합니다. 위치 사용 사유 누락은 missingUsageDescription으로 요청 전에 거절합니다. 시간 초과는 OS 팝업 취소나 자동 재요청을 뜻하지 않습니다.
+- Bluetooth 하드웨어 미지원은 request에서 unsupported입니다. 조회는 하드웨어 관리자를 생성하지 않고 OS 접근 권한만 반환하므로 미지원 장치에서도 notDetermined일 수 있습니다.
+- 옵션이나 접근 범위가 다른 요청은 별도 공유 키를 사용합니다. 알림 옵션을 버리거나 캘린더 쓰기 전용을 전체 접근과 합치지 않습니다. 소비 앱이 서로 다른 범위의 요청 순서를 조정해야 합니다.
 - Always 위치 최초 요청은 최초 OS 선택을 기다립니다. 기존 WhenInUse에서 Always 승격은 OS가 프롬프트를 보류하거나 Allow Once에서 무시할 수 있으므로 요청 후 현재 범위를 즉시 반환합니다. 이후 상태를 다시 조회해야 하며 즉시 Always 획득을 보장하지 않습니다.
 - 동시에 다른 위치 범위를 요청하면 최초 진행 중 OS 선택을 공유하므로 반환된 범위를 확인하고 필요한 승격을 별도로 요청합니다. 위치 좌표 조회는 수행하지 않습니다.
 - macOS는 locationAlways 및 ATT 요청을 지원하지 않습니다.

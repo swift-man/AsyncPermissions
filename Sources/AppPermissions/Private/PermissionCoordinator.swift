@@ -24,16 +24,18 @@ final class PermissionCoordinator: PermissionRequesting {
   /// 같은 권한의 진행 중 요청을 공유하고 취소된 호출자에게 결과를 전달하지 않습니다.
   func request(_ permission: PermissionKind) async throws(PermissionError) -> PermissionStatus {
     guard !Task.isCancelled else { throw .cancelled }
-    let currentStatus = await status(for: permission)
-    guard !Task.isCancelled else { throw .cancelled }
-    guard Self.shouldRequest(permission, status: currentStatus) else { return currentStatus }
+    guard driver.supports(permission) else { throw .unsupported }
     let request: Task<Result<PermissionStatus, PermissionError>, Never>
     if let pendingRequest = pendingRequests[permission] {
       request = pendingRequest
     } else {
       let driver = driver
       request = Task {
-        do { return .success(try await driver.request(permission)) }
+        do {
+          let currentStatus = await driver.status(for: permission)
+          guard Self.shouldRequest(permission, status: currentStatus) else { return .success(currentStatus) }
+          return .success(try await driver.request(permission))
+        }
         catch { return .failure(PermissionError.systemError(error)) }
       }
       pendingRequests[permission] = request

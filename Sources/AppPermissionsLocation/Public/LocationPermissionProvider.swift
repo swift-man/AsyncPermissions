@@ -34,10 +34,7 @@ public final class LocationPermissionProvider: PermissionProviding {
   public func request(_ permission: PermissionKind) async throws(PermissionError) -> PermissionStatus {
     guard supports(permission) else { throw .unsupported }
     guard !Task.isCancelled else { throw .cancelled }
-    #if os(macOS)
-    if permission == .locationAlways { throw .unsupported }
-    #endif
-    let result = await driver.request(permission)
+    let result = try await driver.request(permission)
     guard !Task.isCancelled else { throw .cancelled }
     return result
   }

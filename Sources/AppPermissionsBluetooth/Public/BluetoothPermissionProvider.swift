@@ -29,7 +29,7 @@ public final class BluetoothPermissionProvider: PermissionProviding {
   public func request(_ permission: PermissionKind) async throws(PermissionError) -> PermissionStatus {
     guard supports(permission) else { throw .unsupported }
     guard !Task.isCancelled else { throw .cancelled }
-    let result = await driver.request()
+    let result = try await driver.request()
     guard !Task.isCancelled else { throw .cancelled }
     return result
   }

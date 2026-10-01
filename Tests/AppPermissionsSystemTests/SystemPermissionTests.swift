@@ -128,12 +128,37 @@ struct SystemPermissionTests {
   }
 
   /// 미지원 옵션 비트는 OS 팝업 요청 전에 명시적으로 거절합니다.
-  @Test
-  func rejectsUnknownNotificationOptions() async {
+  @Test(arguments: [NotificationPermissionOptions(rawValue: 1 << 20), []])
+  func rejectsUnknownNotificationOptions(_ options: NotificationPermissionOptions) async {
     let provider = NotificationsPermissionProvider()
+    let permission = PermissionKind.notifications(options: options)
+    #expect(!provider.supports(permission))
+    #expect(await provider.status(for: permission) == .unknown)
     do {
-      _ = try await provider.request(.notifications(options: .init(rawValue: 1 << 20)))
+      _ = try await provider.request(permission)
       Issue.record("정의되지 않은 알림 옵션은 거절해야 합니다.")
     } catch { #expect(error == .unsupported) }
+    let client = PermissionClient(providers: [provider])
+    do {
+      _ = try await client.request(permission)
+      Issue.record("공개 클라이언트도 미지원 옵션을 거절해야 합니다.")
+    } catch { #expect(error == .unsupported) }
+  }
+
+  /// 쓰기 전용을 지원하지 않는 구 OS에서 지원 범위가 일관되게 거절됩니다.
+  @Test
+  func validatesCalendarPlatformSupport() async {
+    let provider = CalendarPermissionProvider()
+    #expect(provider.supports(.calendarFullAccess))
+    if #available(iOS 17, macOS 14, *) {
+      #expect(provider.supports(.calendarWriteOnly))
+    } else {
+      #expect(!provider.supports(.calendarWriteOnly))
+      let client = PermissionClient(providers: [provider])
+      do {
+        _ = try await client.request(.calendarWriteOnly)
+        Issue.record("구 OS 쓰기 전용 요청은 거절해야 합니다.")
+      } catch { #expect(error == .unsupported) }
+    }
   }
 }

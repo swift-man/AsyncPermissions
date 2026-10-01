@@ -16,8 +16,8 @@ public final class NotificationsPermissionProvider: PermissionProviding {
 
   /// 알림 요청 옵션을 가진 권한만 지원합니다.
   public func supports(_ permission: PermissionKind) -> Bool {
-    if case .notifications = permission { return true }
-    return false
+    guard case .notifications(let options) = permission else { return false }
+    return !options.isEmpty && options.subtracting([.alert, .sound, .badge, .provisional]).isEmpty
   }
 
   /// 비동기 OS 설정 조회로 최신 권한을 반환합니다.
@@ -29,8 +29,7 @@ public final class NotificationsPermissionProvider: PermissionProviding {
 
   /// 전달받은 알림 옵션만 요청하고 설정 이동·푸시 토큰 등록은 하지 않습니다.
   public func request(_ permission: PermissionKind) async throws(PermissionError) -> PermissionStatus {
-    guard case .notifications(let options) = permission else { throw .unsupported }
-    guard options.subtracting([.alert, .sound, .badge, .provisional]).isEmpty else { throw .unsupported }
+    guard supports(permission), case .notifications(let options) = permission else { throw .unsupported }
     guard !Task.isCancelled else { throw .cancelled }
     do {
       _ = try await UNUserNotificationCenter.current().requestAuthorization(options: Self.systemOptions(options))

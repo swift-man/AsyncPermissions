@@ -16,7 +16,9 @@ public final class CalendarPermissionProvider: PermissionProviding {
 
   /// 이 모듈의 접근 범위만 지원합니다.
   public func supports(_ permission: PermissionKind) -> Bool {
-    permission == .calendarFullAccess || permission == .calendarWriteOnly
+    if permission == .calendarFullAccess { return true }
+    if #available(iOS 17, macOS 14, *) { return permission == .calendarWriteOnly }
+    return false
   }
 
   /// OS의 현재 접근 범위를 조회합니다.
