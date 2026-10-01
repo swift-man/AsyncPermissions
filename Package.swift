@@ -3,8 +3,8 @@
 //  Package.swift
 //  AsyncPermissions
 //
-//  Created by NHN on 2026/10/01.
-//  Copyright © 2026 com.nhnedu.pinkdiary. All rights reserved.
+//  Created by Gorani on 2026/10/01.
+//  Copyright © 2026 Gorani. All rights reserved.
 //
 
 import PackageDescription
