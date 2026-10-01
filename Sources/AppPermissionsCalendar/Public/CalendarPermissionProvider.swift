@@ -40,8 +40,6 @@ public final class CalendarPermissionProvider: PermissionProviding {
           _ = try await eventStore.requestFullAccessToEvents()
         }
       } else {
-        // 구 OS에서 쓰기 전용 요청을 전체 권한 요청으로 확대하지 않습니다.
-        if permission == .calendarWriteOnly { throw PermissionError.unsupported }
         _ = try await eventStore.requestAccess(to: .event)
       }
     } catch { throw .systemError(error) }

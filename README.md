@@ -99,7 +99,7 @@ PermissionError는 cancelled, unsupported, timedOut, missingUsageDescription(key
 | ATT | NSUserTrackingUsageDescription |
 | 알림 | 사용 사유 키 없음. capabilities와 APNs 등록은 소비 앱 책임 |
 
-macOS 앱은 각 기능의 entitlement와 OS 버전별 사용 사유를 별도로 구성합니다.
+macOS 위치 권한은 NSLocationUsageDescription을 사용합니다. macOS 앱은 각 기능의 entitlement와 OS 버전별 사용 사유를 별도로 구성합니다.
 
 ## 구조와 검증
 

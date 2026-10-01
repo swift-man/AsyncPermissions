@@ -44,8 +44,10 @@ final class SystemLocationAuthorizationManager: NSObject, CLLocationManagerDeleg
 
   /// 상태 값만 주 액터로 전달합니다.
   nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-    let status = manager.authorizationStatus
-    Task { @MainActor [weak self] in self?.onChange?(status) }
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      onChange?(authorizationStatus)
+    }
   }
 }
 
@@ -80,8 +82,10 @@ final class LocationPermissionDriver {
 
   /// 사용 사유를 검증하고 콜백 누락 시 60초 뒤 명시적 오류로 대기를 해제합니다.
   func request(_ permission: PermissionKind) async throws(PermissionError) -> PermissionStatus {
+    #if os(macOS)
+    let requiredKeys = ["NSLocationUsageDescription"]
+    #else
     var requiredKeys = ["NSLocationWhenInUseUsageDescription"]
-    #if os(iOS)
     if permission == .locationAlways { requiredKeys.append("NSLocationAlwaysAndWhenInUseUsageDescription") }
     #endif
     for key in requiredKeys where !hasUsageDescription(key) { throw .missingUsageDescription(key: key) }

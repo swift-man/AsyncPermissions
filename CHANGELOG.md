@@ -16,6 +16,8 @@ VERSION.txt는 다음 배포 대상 버전을 나타내며 릴리즈 태그 생�
 
 ### Fixed
 
+- macOS 위치 사용 사유를 NSLocationUsageDescription으로 검증하고 플랫폼별 회귀 테스트 추가.
+- 위치·Bluetooth delegate의 OS 관리자 상태 조회를 MainActor 안에서 수행.
 - 비동기 상태 조회부터 요청 판단까지 공유 Task에 포함하여 늦은 조회의 중복 요청 방지.
 - 미지원 알림 옵션과 구 OS 캘린더 쓰기 전용 요청을 권한 상태와 관계없이 거절.
 - 위치 사용 사유 누락을 요청 전에 검증하고 무기한 공유 요청 고착 방지.

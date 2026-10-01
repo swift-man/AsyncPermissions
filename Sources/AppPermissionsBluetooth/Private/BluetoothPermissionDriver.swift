@@ -40,11 +40,9 @@ final class SystemBluetoothAuthorizationManager: NSObject, CBCentralManagerDeleg
   /// 해제된 이전 관리자의 늦은 콜백은 새 요청에 전달하지 않습니다.
   nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
     let identity = ObjectIdentifier(central)
-    let authorization = CBManager.authorization
-    let isUnsupported = central.state == .unsupported
     Task { @MainActor [weak self] in
       guard let self, let manager, ObjectIdentifier(manager) == identity else { return }
-      onChange?(authorization, isUnsupported)
+      onChange?(authorization, manager.state == .unsupported)
     }
   }
 }

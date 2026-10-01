@@ -78,8 +78,38 @@ struct DelegatePermissionTests {
     do {
       _ = try await driver.request(.locationWhenInUse)
       Issue.record("설정 누락은 요청 전에 거절해야 합니다.")
-    } catch { #expect(error == .missingUsageDescription(key: "NSLocationWhenInUseUsageDescription")) }
+    } catch {
+      #if os(macOS)
+      #expect(error == .missingUsageDescription(key: "NSLocationUsageDescription"))
+      #else
+      #expect(error == .missingUsageDescription(key: "NSLocationWhenInUseUsageDescription"))
+      #endif
+    }
     #expect(manager.requestCount == 0)
+  }
+
+  /// 플랫폼에 맞는 사용 사유 키만 설정해도 위치 요청을 시작할 수 있습니다.
+  @Test
+  func acceptsPlatformLocationUsageDescription() async throws {
+    let manager = LocationManagerDouble()
+    let deadline = DeadlineDouble()
+    let driver = LocationPermissionDriver(
+      manager: manager,
+      waitForDeadline: { try await deadline.wait() },
+      hasUsageDescription: { key in
+        #if os(macOS)
+        return key == "NSLocationUsageDescription"
+        #else
+        return key == "NSLocationWhenInUseUsageDescription"
+        #endif
+      }
+    )
+    let request = Task { try await driver.request(.locationWhenInUse) }
+    await manager.waitUntilRequested()
+    manager.authorizationStatus = .authorizedAlways
+    manager.onChange?(.authorizedAlways)
+    #expect(try await request.value == .authorized)
+    #expect(manager.requestCount == 1)
   }
 
   /// Always 승격이 보류되더라도 무기한 대기하지 않습니다.
