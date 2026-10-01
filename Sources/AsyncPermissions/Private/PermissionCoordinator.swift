@@ -1,39 +1,10 @@
 //
-//  PermissionClient.swift
+//  PermissionCoordinator.swift
 //  AsyncPermissions
 //
-//  Created by NHN on 2026/10/01.
+//  Created by NHN on 2026/10/02.
 //  Copyright © 2026 com.nhnedu.pinkdiary. All rights reserved.
 //
-
-public enum PermissionKind: Sendable, Hashable {
-  case camera
-  case photosReadWrite
-  case photosAddOnly
-}
-
-public enum PermissionStatus: Sendable, Equatable {
-  case notDetermined
-  case authorized
-  case limited
-  case denied
-  case restricted
-  case unknown
-
-  public var isGranted: Bool { self == .authorized || self == .limited }
-}
-
-public enum PermissionError: Error, Sendable, Equatable {
-  case cancelled
-}
-
-@MainActor
-public protocol PermissionRequesting: AnyObject {
-  /// OS의 현재 권한 상태를 조회하며 자체 캐시를 사용하지 않습니다.
-  func status(for permission: PermissionKind) -> PermissionStatus
-  /// 미결정 상태에서만 시스템 권한을 요청합니다. 안내·설정 이동은 호출자가 담당합니다.
-  func request(_ permission: PermissionKind) async throws(PermissionError) -> PermissionStatus
-}
 
 @MainActor
 protocol PermissionDriving: AnyObject {
@@ -44,14 +15,9 @@ protocol PermissionDriving: AnyObject {
 }
 
 @MainActor
-public final class PermissionClient: PermissionRequesting {
+final class PermissionCoordinator: PermissionRequesting {
   private let driver: any PermissionDriving
   private var pendingRequests: [PermissionKind: Task<PermissionStatus, Never>] = [:]
-
-  /// 플랫폼의 권한 요청 구현으로 클라이언트를 구성합니다.
-  public convenience init() {
-    self.init(driver: SystemPermissionDriver())
-  }
 
   /// 테스트에서 OS 팝업 없이 상태와 비동기 응답을 주입합니다.
   init(driver: any PermissionDriving) {
@@ -59,12 +25,12 @@ public final class PermissionClient: PermissionRequesting {
   }
 
   /// 설정에서 변경한 권한도 즉시 반영합니다.
-  public func status(for permission: PermissionKind) -> PermissionStatus {
+  func status(for permission: PermissionKind) -> PermissionStatus {
     driver.status(for: permission)
   }
 
   /// 같은 권한의 진행 중 요청을 공유하고 취소된 호출자에게 결과를 전달하지 않습니다.
-  public func request(_ permission: PermissionKind) async throws(PermissionError) -> PermissionStatus {
+  func request(_ permission: PermissionKind) async throws(PermissionError) -> PermissionStatus {
     guard !Task.isCancelled else { throw .cancelled }
     let currentStatus = status(for: permission)
     guard currentStatus == .notDetermined else { return currentStatus }

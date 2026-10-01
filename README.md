@@ -60,6 +60,13 @@ Task 취소는 `PermissionError.cancelled`로 구분하므로 호출부는 `try 
 - 카메라 요청에는 `NSCameraUsageDescription`, 사진 읽기·쓰기에는 `NSPhotoLibraryUsageDescription`, 사진 추가 전용에는 `NSPhotoLibraryAddUsageDescription`을 앱 Info.plist에 설정해야 합니다.
 - macOS 앱은 사용하는 기능의 sandbox entitlement와 사용 사유를 별도로 구성해야 합니다.
 
+## 소스 구조
+
+- `Sources/AsyncPermissions/Public`: 공개 타입·프로토콜과 얇은 PermissionClient API
+- `Sources/AsyncPermissions/Private`: internal 권한 드라이버·요청 조정 구현
+- 공개 타입의 캡슐화에 필요한 private 저장 프로퍼티는 해당 타입에 유지하며, 요청 공유·취소 등의 구현은 Private에 둡니다.
+- 폴더명 자체가 Swift 접근 제한을 설정하는 것은 아니므로 선언의 접근 수준도 함께 유지합니다.
+
 ## 테스트
 
 ```sh

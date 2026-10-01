@@ -18,7 +18,7 @@ struct PermissionClientTests {
   func determinedStatusDoesNotRequest(_ status: PermissionStatus) async throws {
     let driver = PermissionDriverDouble()
     driver.currentStatus = status
-    let client = PermissionClient(driver: driver)
+    let client = PermissionCoordinator(driver: driver)
     #expect(try await client.request(.photosReadWrite) == status)
     #expect(driver.requestedPermissions.isEmpty)
   }
@@ -28,7 +28,7 @@ struct PermissionClientTests {
   func requestsUndeterminedPermission(_ permission: PermissionKind) async throws {
     let driver = PermissionDriverDouble()
     driver.response = .authorized
-    let client = PermissionClient(driver: driver)
+    let client = PermissionCoordinator(driver: driver)
     #expect(try await client.request(permission) == .authorized)
     #expect(driver.requestedPermissions == [permission])
   }
@@ -37,7 +37,7 @@ struct PermissionClientTests {
   @Test
   func refreshesStatusAfterSettingsChange() {
     let driver = PermissionDriverDouble()
-    let client = PermissionClient(driver: driver)
+    let client = PermissionCoordinator(driver: driver)
     #expect(client.status(for: .camera) == .notDetermined)
     driver.currentStatus = .denied
     #expect(client.status(for: .camera) == .denied)
@@ -68,7 +68,7 @@ struct PermissionClientTests {
   func sharesPendingRequestAndSeparatesCancellation() async throws {
     let driver = PermissionDriverDouble()
     driver.shouldSuspend = true
-    let client = PermissionClient(driver: driver)
+    let client = PermissionCoordinator(driver: driver)
     let cancelledRequest = Task { try await client.request(.camera) }
     await driver.waitUntilRequested()
     let remainingRequest = Task { try await client.request(.camera) }
@@ -90,7 +90,7 @@ struct PermissionClientTests {
   @Test
   func cancellationBeforeRequest() async {
     let driver = PermissionDriverDouble()
-    let client = PermissionClient(driver: driver)
+    let client = PermissionCoordinator(driver: driver)
     let request = Task {
       withUnsafeCurrentTask { $0?.cancel() }
       return try await client.request(.camera)
